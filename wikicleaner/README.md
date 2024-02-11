@@ -11,6 +11,6 @@ The intent of this project is to provide some low-level routines that allow us t
 ```py
 >>> import wikicleaner as wc
 >>> article_raw_text = "[[File:Colorful spring garden.jpg|thumb|180px|right|[[Spring]] flowers in April in the [[Northern Hemisphere]].]] April comes between [[March]] and [[May]]"
->>> wc.strip_file_annotations(article_raw_text)
+>>> wc.clean_article_text(article_raw_text)
 ' April comes between March and May'
 ```

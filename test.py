@@ -52,7 +52,7 @@ def ms_process_xml():
         json_file.write(json.dumps(d, indent=4))
 
     for article_name, article_text in d.items():
-        d[article_name]= wikicleaner.strip_file_annotations(article_text)
+        d[article_name] = wikicleaner.clean_article_text(article_text)
 
     with open(out_processed, 'w') as json_file:
         json_file.write(json.dumps(d, indent=4))
@@ -73,7 +73,32 @@ def single_thread_decompress():
 
     print("All done")
 
+def comparison():
+    """Compare the before and after processing to understand what went wrong."""
+
+    directory = "/home/ejovo/MAIN/S9/machine_learning/project/data"
+
+    pre  = join(directory, "test.json")
+    post = join(directory, "test_processed.json")
+
+    with open(pre) as pre_file:
+        pre_dict = json.loads(pre_file.read())
+
+    with open(post) as post_file:
+        post_dict = json.loads(post_file.read())
+
+    key = "Art"
+
+    pre_value = pre_dict[key]
+    post_value = post_dict[key]
+
+    ic(pre_value)
+    ic(post_value)
+
+
+
 
 if __name__ == '__main__':
 
     ms_process_xml()
+    # comparison()
