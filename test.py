@@ -1,6 +1,7 @@
 from src import *
 
 from os.path import join
+import wikicleaner
 
 def multi_streaming():
 
@@ -45,16 +46,16 @@ def ms_process_xml():
     json_out_dir = "/home/ejovo/MAIN/S9/machine_learning/project/data"
 
     out_filename = join(json_out_dir, "test.json")
+    out_processed = join(json_out_dir, "test_processed.json")
     # Write this to a file
     with open(out_filename, 'w') as json_file:
         json_file.write(json.dumps(d, indent=4))
 
-    articles_retrieved = list(d.keys())
-    print(f"Articles retrieved: {articles_retrieved}")
+    for article_name, article_text in d.items():
+        d[article_name]= wikicleaner.strip_file_annotations(article_text)
 
-    print("Sample text for April:")
-    print(d["April"])
-
+    with open(out_processed, 'w') as json_file:
+        json_file.write(json.dumps(d, indent=4))
 
 
 def single_thread_decompress():
