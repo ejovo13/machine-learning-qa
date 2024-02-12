@@ -1,15 +1,11 @@
 """Routines to extract certain information from the bz2 archive."""
 
 import bz2
+import html
 from dataclasses import dataclass
 import os.path as os_path
 
-
-DEFAULT_DUMP_FILE = "/home/ejovo/MAIN/S9/machine_learning/project/data/dump/simplewiki-20240201-pages-articles-multistream.xml.bz2"
-DEFAULT_MULTISTREAM_DIR = (
-    "/home/ejovo/MAIN/S9/machine_learning/project/data/xml/multistream"
-)
-DEFAULT_INDEX_FILE = "/home/ejovo/MAIN/S9/machine_learning/project/data/dump/simplewiki-20240201-pages-articles-multistream-index.txt"
+from .const import *
 
 
 def open_dump(filename: str = DEFAULT_DUMP_FILE):
@@ -47,10 +43,12 @@ class IndexEntry:
 
     multistream_index: int
     article_id: int
-    article_name: str
+    article_title: str
 
 
-def open_index(filename: str) -> tuple[list[IndexEntry], list[int]]:
+def open_index(
+    filename: str = DEFAULT_INDEX_FILE,
+) -> tuple[list[IndexEntry], list[int]]:
     """Return a list of IndexEntry and byte indices that designate the different multistreams in our data dump."""
     byte_indices = set()
     index_entries: list[IndexEntry] = []
@@ -60,11 +58,19 @@ def open_index(filename: str) -> tuple[list[IndexEntry], list[int]]:
 
         for line in file:
             # Keep track of the set of actual byte indices
-            byte_index, article_id, article_name = line.split(":")[0:3]
-            byte_indices.add(int(byte_index))
+            first_colon_idx = line.find(":")
+            second_colon_idx = line.find(":", first_colon_idx + 1)
+
+            byte_index = int(line[0:first_colon_idx])
+            article_id = int(line[first_colon_idx + 1:second_colon_idx])
+            article_title = line[second_colon_idx + 1:].strip()
+            article_title.replace("&amp;", "&")
+            article_title = html.unescape(article_title)
+
+            byte_indices.add(byte_index)
             # Store metainformation about each index
             index_entries.append(
-                IndexEntry(len(byte_indices), article_id, article_name)
+                IndexEntry(len(byte_indices), article_id, article_title)
             )
             line_count += 1
 
@@ -89,7 +95,7 @@ def write_xml_bytes(bs: bytes, filename: str):
 def decompress_dump_multistream(
     dump_file: str = DEFAULT_DUMP_FILE,
     index_file: str = DEFAULT_INDEX_FILE,
-    output_directory: str = DEFAULT_MULTISTREAM_DIR,
+    output_directory: str = DEFAULT_MULTISTREAM_XML_DIR,
 ):
     """Decompress the content of our dump - in serial - into different xml files, one for each stream.
 

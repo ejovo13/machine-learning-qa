@@ -1,3 +1,5 @@
+use std::error::Error;
+
 use pyo3::prelude::*;
 
 /// Formats the sum of two numbers as string.
@@ -75,15 +77,35 @@ impl BracketLocation {
         slice.chars().count()
     }
 
+    fn n_brackets(&self, source_str: &str) -> usize {
+        if self.is_doubled(source_str) {
+            2
+        } else {
+            1
+        }
+    }
+
     /// Return the contents of the sting inside of our brackets. Necessary to avoid a silly UTF-8 error that I made.
     fn inner(&self, source_str: &str) -> String {
         // We want to skip the first two characters, and drop the last two!
         let slice = &source_str[self.start_pos..self.end_pos];
-        slice
-            .chars()
-            .take(self.len(source_str) - 2)
-            .skip(2)
-            .collect()
+        let num_brackets = self.n_brackets(source_str);
+        // println!("Num_brackets: {}, slice: {}", num_brackets, self.slice(source_str));
+
+        let len_inner = self.len(source_str);
+        if len_inner == 0 {
+            "".to_string()
+        } else if len_inner < num_brackets {
+            dbg!(self);
+            panic!("What the fuck is going on? \n source: {}\n len_inner: {}, slice: {}", source_str, len_inner, self.slice(source_str));
+        } else {
+
+            slice
+                .chars()
+                .take(self.len(source_str) - num_brackets)
+                .skip(num_brackets)
+                .collect()
+        }
     }
 
     fn next_index(&self, source_str: &str) -> usize {
@@ -93,6 +115,51 @@ impl BracketLocation {
     }
 }
 
+type Result<T> = std::result::Result<T, Box<dyn Error>>;
+
+/// Result of [validate_square_bracket_placement]. Beware, [BracketValidation::Equal] does not guarentee
+/// that our string is properly formed.
+enum BracketValidation {
+    /// There is at least one dangling ']' bracket
+    DanglingRight,
+    /// There is at least one unmatched '[' bracket
+    UnmatchedLeft,
+    Equal
+}
+
+/// Count to make sure that there are the same number of '[' as there are ']'
+fn validate_square_bracket_placement(article_text: &str) -> BracketValidation {
+
+    // +1 for a left bracket, -1 for a right bracket
+    let mut bracket_count = 0;
+
+    for c in article_text.chars() {
+        match c {
+            '[' => {
+                bracket_count += 1;
+            }
+            ']' => {
+                // Protect against dangling ']' character
+                bracket_count -= 1;
+                if bracket_count < 0 { return BracketValidation::DanglingRight }
+            },
+            _ => ()
+        }
+    }
+
+    if bracket_count == 0 {
+        BracketValidation::Equal
+    } else {
+        BracketValidation::UnmatchedLeft
+    }
+}
+
+
+/// Mark the locations of curly and square brackets.
+///
+/// This function is robust against dangling right `']'` brackets, but cannot
+/// protect agains unmatched left `'['` brackets. Use [[validate_square_bracket_placement]] to
+/// defend against [BracketValidation::DanglingLeft] edge cases.
 fn mark_bracket_locations(article_text: &str) -> Vec<BracketLocation> {
     let mut locations: Vec<BracketLocation> = vec![];
 
@@ -116,7 +183,12 @@ fn mark_bracket_locations(article_text: &str) -> Vec<BracketLocation> {
                 }
                 lsb_count += 1
             }
-            ']' => rsb_count += 1,
+            ']' => {
+                // Protect against danglins ']' character
+                if lsb_count != 0 {
+                    rsb_count += 1
+                }
+            },
             '{' => {
                 if lcb_count == 0 {
                     lcb_open_index = idx;
@@ -172,7 +244,7 @@ fn sanitize_locations(locations: Vec<BracketLocation>) -> Vec<BracketLocation> {
             .zip(&locations[0..n - 1])
             .filter_map(|(next, prev)| {
                 if next.start_pos > prev.end_pos {
-                    Some(prev.clone())
+                    Some(next.clone())
                 } else {
                     None
                 }
@@ -226,6 +298,8 @@ fn strip_double_brackets(article_text: &str) -> String {
         .into_iter()
         .filter(|b| b.is_doubled(article_text))
         .collect();
+
+    let locations = sanitize_locations(locations);
 
     // Now we want to effectively remove the brackets by building up our string
     if locations.is_empty() {
@@ -426,6 +500,211 @@ mod tests {
         let raw_string = "Here is a [[Annotation:bitch]] yup";
         let expected_string = "Here is a Annotation:bitch yup".to_string();
         assert_eq!(strip_double_brackets(raw_string), expected_string);
+    }
+
+    #[test]
+    fn test_failing() {
+        let raw_string = r#"[[File:The Star-Spangled Banner.JPG|thumb|300px|right|An 1814 copy of the Star-Spangled Banner]]
+        [[File:Star Spangled Banner Flag on display at the Smithsonian's National Museum of History and Technology, around 1964.jpg|thumb|300px|right|The flag from the song.]]
+        "'''The Star-Spangled Banner'''" is the [[national anthem]] of the [[United States of America]]. [[Francis Scott Key]] wrote the words to it in 1814, after seeing [[Britain|British]] ships attacking [[Fort McHenry]] in [[Baltimore, Maryland]] during the [[War of 1812]].
+
+        The words are set to the music of a British drinking song called "[[To Anacreon in Heaven]]". The song has 4 [[stanza]]s, but only the first one is usually sung. <ref></ref> <ref></ref>
+
+        == Lyrics ==
+        Although the United States does not have an official language, [[American English|English]] is the most used language in everyday life; thus, the official lyrics are in English. However, through the years, "The Star-Spangled Banner" has been translated into other languages. These languages are spoken by [[Americans|people]] living in the United States, who trace their roots to other parts of the globe. These languages include [[Spanish language|Spanish]], [[German language|German]], [[Yiddish]], [[Czech language|Czech]], [[Polish language|Polish]], [[French language|French]], [[Italian language|Italian]], [[Japanese language|Japanese]], [[Korean language|Korean]], [[Chinese language|Chinese]], and [[Arabic]].
+
+        It has also been translated into languages spoken by [[native Americans]], such as [[Navajo language|Navajo]]. A fairly well-known Navajo version called "Dah Naatʼaʼí Sǫʼ bił Sinil" was translated by singer and former [[beauty pageant]] titleholder [[Radmilla Cody]].
+
+        === English original ===
+        The full poem consists of four stanzas with a total of thirty-two lines. But usually, just the first stanza is sung and is the most well-known among Americans.
+
+        <div style="padding-left:20px;"><poem>O say can you see, by the dawn's early light,
+        What so proudly we hailed at the twilight's last gleaming,
+        Whose broad stripes and bright stars through the perilous fight,
+        O'er the ramparts we watched, were so gallantly streaming?
+        And the rocket's red glare, the bombs bursting in air,
+        Gave proof through the night that our flag was still there;
+        O say does that star-spangled banner yet wave
+        O'er the land of the free and the home of the brave?
+
+        On the shore dimly seen through the mists of the deep,
+        Where the foe's haughty host in dread silence reposes,
+        What is that which the breeze, o'er the towering steep,
+        As it fitfully blows, half conceals, half discloses?
+        Now it catches the gleam of the morning's first beam,
+        In full glory reflected now shines in the stream:
+        'Tis the star-spangled banner, O long may it wave
+        O'er the land of the free and the home of the brave.
+
+        And where is that band who so vauntingly swore
+        That the havoc of war and the battle's confusion,
+        A home and a country, should leave us no more?
+        Their blood has washed out their foul footsteps' pollution.
+        No refuge could save the hireling and slave
+        From the terror of flight, or the gloom of the grave:
+        And the star-spangled banner in triumph doth wave,
+        O'er the land of the free and the home of the brave.
+
+        O thus be it ever, when freemen shall stand
+        Between their loved homes and the war's desolation.
+        Blest with vict'ry and peace, may the Heav'n rescued land
+        Praise the Power that hath made and preserved us a nation!
+        Then conquer we must, when our cause it is just,
+        And this be our motto: 'In God is our trust.'
+        And the star-spangled banner in triumph shall wave
+        O'er the land of the free and the home of the brave!</poem></div>
+
+        === Spanish version ===
+        Three versions of "The Star-Spangled Banner" have been translated into the Spanish language. The first one was done by Francis Haffkine Snow for the [[United States Bureau of Education]].<ref name="loc">[https://loc.gov/item/ihas.100000007 La bandera de las estrellas]. G. Schirmer, New York, NY, 1919.<br>"Spanish translation by Francis Haffkine Snow. This version of the song was prepared by the U.S. Bureau of Education."</ref><ref>[https://enparranda.com/artista-himnos-de-paises/letra-himno-de-estados-unidos-%5Ben-espanol%5D Letra de Himno de estados unidos en español de Himnos De Países] . ''En Parranda''.</ref><ref>[https://www.buenastareas.com/ensayos/Himno-De-Usa/25045451.html himno de usa - Ensayos universitarios - 1718 Palabras]. ''Buenas Tareas''.</ref><ref>[https://www.taringa.net/+info/himno-de-estados-unidos-en-espanol_hxn4t Himno de estados unidos en español: Himno nacional - La Bandera de Estrellas]</ref>
+
+        The second one was done by a [[Peruvian American]] musician named [[Clotilde Arias]], for a competition held by then-president [[Franklin D. Roosevelt]], as a part of his [[Good Neighbor policy]] in an effort to promote American ideals in [[Latin America]]. This musician was the winner of this contest and her Spanish version was accepted by the [[United States Department of State]] in 1946.<ref>[https://www.bbc.com/news/magazine-29215415 From star-spangled to estrellado: US Anthem translator celebrated] (2014-09-18). Sparrow, Thomas. ''BBC Mundo''.</ref><ref>[https://americanhistory.si.edu/documentsgallery/exhibitions/arias/8.html «The Star-Spangled Banner ~ Not Lost in Translation: The Life of Clotilde Arias | Albert H. Small Documents Gallery | Smithsonian NMAH».]</ref><ref>[https://web.archive.org/web/20150210234444/http://voxxi.com/2012/10/12/clotilde-arias-spanish-star-spangled/ Clotilde Arias honored for Spanish version of Star-Spangled Banner] (2012-10-12). Baumann, Susana. ''VOXXI News''.</ref>
+
+        Another version of "The Star-Spangled Banner" in Spanish is a single by many recording artists and singer-songwriters. It is probably the most well-known version. This version is titled "Nuestro Himno" (meaning "Our Anthem"), written by [[Adam Kidron]] and [[Eduardo Reyes]].<ref>[https://usatoday30.usatoday.com/news/nation/2006-04-28-spanish-anthem_x.htm Spanish 'Banner' draws protest] (2006-04-28). ''USA Today''.</ref> Kidron started the whole idea because he wanted to show support for Hispanic immigrants in the U.S. In 2006, a [[2006 United States immigration reform protests|change]] to U.S. immigration policy ticked off many people in the United States. "Nuestro Himno" was created in response to this change. The song was released on April 28, 2006 for their album ''Somos Americanos'' (meaning "We are Americans"). Many artists including Andy Andy, Autoridad de la Sierra, [[Aventura (band)|Aventura]], [[Ivy Queen]], [[Wyclef Jean]], [[Kalimba (singer)|Kalimba]], Kany, LDA, N Klabe, Patrulla 81, [[Pitbull (rapper)|Pitbull]], Ponce Carlos, Rayito, [[Reik]], [[Frank Reyes]], [[Tony Sunshine]], [[Olga Tañón]], [[Gloria Trevi]], Voz a Voz and [[Yemọja]] were involved in the making of this song. It was recorded in many cities including [[New York City]], [[Miami]], [[Los Angeles]], [[San Juan]], [[Mexico City]], and [[Madrid]]. The first verse is based on the first verse of the version by Francis Haffkine Snow in 1909.<ref name="loc"/> Although it quickly gained popularity, there have been some people who disliked this idea. Such people included then-president [[George W. Bush]], who did not approve of foreigners changing the national anthem into a language other than English,<ref>[https://www.billboard.com/music/music-news/billboard-bits-nuestro-himno-cracker-marty-stuart-58648/ Billboard Bits: ‘Nuestro Himno,’ Cracker, Marty Stuart]. ''Billboard''.</ref><ref>[https://www.washingtontimes.com/national/20060505-122343-2183r.htm Bush tells immigrants to learn English] (2006-05-05). ''The Washington Times''.</ref><ref>[https://www.nytimes.com/2006/04/28/us/bush-says-anthem-should-be-in-english.html Bush Says Anthem Should Be in English] (2006-04-28). Holusha, John. ''The New York Times''.</ref> as well as by a relative of Francis Scott Key—the original author of the national anthem.<ref>[https://abcnews.go.com/WNT/story?id=1898460 Spanish 'Star Spangled Banner' -- Touting the American Dream or Offensive Rewrite?] (2006-04-28). Avila, Jim. ''ABC News''.</ref>
+
+
+
+        === German version ===
+        In 1861, a version of "The Star-Spangled Banner" was translated by German American poet and immigrant named [[Niclas Müller]].<ref>[https://ingeb.org/songs/thestars.html The Star-Spangled Banner / O say can you see]. ''Ingeb.org''.</ref>
+
+        <div style="padding-left:20px;"><poem>O, sagt, könnt ihr seh'n bei der Dämmerung Schein,
+        Was so stolz wir begrüßten in Abendroths Gluten?
+        Dess Streiffen und Sterne, durch Kämpfender Reih'n,
+        Auf dem Walle wir sahen so wenniglich fluten;
+        Die Raketen am Ort und die Bomben vom Fort,
+        Sie zeigten bei Nacht, daß die Flagge noch dort.
+        O sagt, ob das Banner mit Sternen besäet
+        Über'm Lande der Frei'n und der Tapfern noch weht?
+
+        Am Strand, kaum geseh'n durch den Nebel jetzt noch,
+        Wo des Feinds stolzer Haufen in Schweigsamkeit waltet;
+        Was ist's, daß der Wind, auf dem Thurme so hoch,
+        Wenn er günstig d'ran bläst, halb verdeckt, halb entfaltet?
+        Und jetzt faßt es den Strahl, wie er fällt in das Thal,
+        Und glanzet in Herrlichkeit jetzt auf dem Pfahl.
+        O das ist das Banner mit Sternen besäet,
+        Das noch über den Frei'n und den Tapferen weht!
+
+        Und wo ist der Schwarm, der vermaß sich so sehr,
+        Daß des Krieges Gewühl und Verwirrung der Schlachten,
+        Kein Land, keine Heimath gewähre uns mehr?
+        Ihr Blut hat verwischet ihr freventlich Trachten.
+        Und umsonst hat gesucht sklav und Miethling die Flucht
+        Beim Schrecken des Kampfs und der tödtlichen Wucht.
+        Und siegreich das Banner mit Sternen besäet,
+        Über'm Lande der Frei'n und der Tapfern noch weht!
+
+        Und so soll es sein stets, wo Männer die Hand
+        Sich reichen, entgegen des Aufruhrs Gewalten;
+        Mit Frieden und Sieg mag gesegnet das Land
+        Dann preisen die Macht, die uns einig erhalten;
+        Denn der Sieg muß uns sein, wo die Sache so rein;
+        Und das sei der Wahlspruch: "Auf Gott trau allein!"
+        Und siegreich das Banner mit Sternen besäet
+        Über'm Lande der Frei'n und der Tapfern noch weht!</poem></div>
+
+        === French version ===
+        A version of "The Star-Spangled Banner" was translated into French by a Cajun named David Émile Marcantel.<ref>[https://web.archive.org/web/20130517004403/http://www.musiqueacadienne.com/banniere.htm La Bannière Étoilée, l'hymne national américain (The Star Spangled Banner)] (Trad., P.D., French words David Émile Marcantel, Vocal arrangement Jeanette Aguillard). ''MusiqueAcadienne.com''.</ref>
+
+        <div style="padding-left:20px;"><poem>O dites, voyez-vous
+        Dans la lumière du jour
+        Le drapeau qu'on saluait
+        À la tombée de la nuit ?
+        Dont les trois couleurs vives
+        Pendant la dure bataille
+        Au-dessus des remparts
+        Inspiraient notre pays.
+        Et l'éclair des fusées,
+        Des bombes qui explosaient,
+        Démontraient toute la nuit
+        Que le drapeau demeurait.
+        Est-ce que la bannière étoilée
+        Continue toujours à flotter
+        Au-dessus d'une nation brave,
+        Terre de la liberté ?</poem></div>
+
+        === Navajo version ===
+        A Navajo version of "The Star-Spangled Banner" was performed by model and singer Radmilla Cody. It is titled "'''Dah Naatʼaʼí Sǫʼ bił Sinil'''" in the [[Navajo language]], under her first album ''Within the Four Directions''.<ref>[https://lyricstranslate.com/en/radmilla-cody-dah-naat%CA%BCa%CA%BC%C3%AD-s%C7%AB%CA%BC-bi%C5%82-sinil-lyrics.html Dah Naatʼaʼí Sǫʼ bił Sinil lyrics]</ref><ref>[https://nv.wikipedia.org/wiki/Dah_Naat%CA%BCa%CA%BC%C3%AD_S%C7%AB%CA%BC_bi%C5%82_Sinil Dah Naatʼaʼí Sǫʼ bił Sinil] — Navajo Wikipedia]</ref>
+
+        <div style="padding-left:20px;"><poem>Yá shoo danółʼį́į́ʼ
+        Hayoołkááł biyiʼdę́ę́ʼ
+        Baa dahwiiʼniihgo átʼé
+        Dah naatʼaʼí éí yéigo nihił nilíinii.
+
+        Noodǫ́ǫ́z dóó bizǫʼ disxǫs
+        Naabaahii yitaayá
+        Bitsʼą́ą́ honiyéeʼgo deiníłʼį́
+        Nihichʼįʼ ínidída ndi baa ííníidlį́
+
+        Áh, hoolʼáágóó bineʼ neidą́
+        Báhádzid dahólǫ́ǫ ndi
+        Éí yeeʼ bee tʼáá sih hasin
+        Tʼóó nihá dah siłtzoos ndi
+
+        Tʼóó shį́į́ éí sǫʼ bił sinilgo
+        Dah naatʼá, áh hoolʼáa doo
+        Nihikéyah bikʼihígíí
+        Kʼad hózhǫ́ náhásdlį́į́ʼ</poem></div>
+
+        === Yiddish version ===
+        A [[Yiddish]] version titled "'''Di Shtern-Batsirte Fon'''" was translated by a [[Jewish American]] poet named Dr. Avrom Aisen, on the hundredth anniversary of Scott Key's death. It was published in 1943 by the Educational Alliance located New York City.<ref>[https://museumoffamilyhistory.com/yw-ssb.htm The Star Spangled Banner IN YIDDISH Translated by Dr. Avrom Aisen (Asen). Courtesy of the Educational Alliance, New York, New York] (1943). ''The Museum of Family History'' website.</ref>
+
+        === Samoan version ===
+        [[Samoan language|Samoan]] is a language spoken in [[American Samoa]], the American part of the [[Pacific Ocean|Pacific]] [[island]] of [[Samoa]].
+
+        :Aue! Se'i e vaai, le malama o ataata mai
+        :Na sisi a'e ma le mimita, i le sesega mai o le vaveao
+        :O ai e ona tosi ma fetu, o alu a'e i taimi vevesi tu
+        :I luga o 'Olo mata'utia, ma loto toa tausa'afia
+        :O roketi mumu fa'aafi, o pomu ma fana ma aloi afi
+        :E fa'amaonia i le po atoa, le fu'a o lo'o tu maninoa
+        :Aue! ia tumau le fe'ilafi mai, ma agiagia pea
+        :I eleele o sa'olotoga, ma nofoaga o le au totoa.
+
+        == Media ==
+
+
+
+
+        == References ==
+
+
+        == Other websites ==
+
+
+        * [https://www.loc.gov/exhibits/treasures/trm065.html Library of Congress] article
+        * [http://americanhistory.si.edu/ssb/6_thestory/6b_osay/fs6b.html National Museum of American History]  article
+        * [http://www.mdoe.org/starspangban.html Maryland Online Encyclopedia] article
+        * [http://www.atlascom.us/defender.htm British Attack on Ft. McHenry Launched from Bermuda]
+        * [http://www.si.edu/resource/faq/nmah/starflag.htm Encyclopedia Smithsonian article on "The Star-Spangled Banner"]
+        * [http://www.infoplease.com/spot/starmangledbanner.html "Star-Mangled Banner: A look at some controversial, and botched, renditions of our national anthem"]
+        * [http://www.worldwideschool.org/library/books/hst/northamerican/TheStarSpangledBanner/Chap1.html "The Star-Spangled Banner" by John A. Carpenter]
+        * [http://www.easybyte.org Easybyte]—free easy piano arrangement of "The Star-Spangled Banner / Anacreon in Heaven"
+        * [http://www.citypages.com/databank/22/1074/article9676.asp "Stars and Stripes Forever"]  City Pages, July 4, 2001
+        * [http://www.sptimes.com/News/012801/SuperBowl2001/The_toughest_2_minute.shtml "The Toughest 2 Minutes"]
+
+
+        [[Category:1814]]
+        [[Category:19th-century American songs]]
+        [[Category:Songs about the United States]]
+        [[Category:Symbols of the United States]]
+        [[Category:1810s songs]]
+        [[Category:North American anthems]]"#;
+
+        let sans_curly = strip_double_brackets_curly(raw_string);
+
+        let locations = mark_bracket_locations(&sans_curly);
+        for loc in locations {
+            dbg!(loc.slice(&sans_curly));
+        }
+
+        let failing_pos = 13097;
+        let span = 100;
+
+        // dbg!(raw_string.get(failing_pos - span..failing_pos + span));
+
+        let sans_annotations = strip_annotations(&sans_curly);
+
+
     }
 
 }
