@@ -1,7 +1,12 @@
+from os.path import join
+import json
+import bz2
+
+from icecream import ic
+import wikicleaner
+
 from src import *
 
-from os.path import join
-import wikicleaner
 
 def multi_streaming():
 
@@ -38,6 +43,7 @@ def multi_streaming():
     # Let's just try sequentially to see how our program runs.
     # for (idx, byte_idx) in enumerate(indices[:-1]):
 
+
 def ms_process_xml():
 
     xml_file = "/home/ejovo/MAIN/S9/machine_learning/project/data/xml/test.xml"
@@ -48,13 +54,13 @@ def ms_process_xml():
     out_filename = join(json_out_dir, "test.json")
     out_processed = join(json_out_dir, "test_processed.json")
     # Write this to a file
-    with open(out_filename, 'w') as json_file:
+    with open(out_filename, "w") as json_file:
         json_file.write(json.dumps(d, indent=4))
 
     for article_name, article_text in d.items():
         d[article_name] = wikicleaner.clean_article_text(article_text)
 
-    with open(out_processed, 'w') as json_file:
+    with open(out_processed, "w") as json_file:
         json_file.write(json.dumps(d, indent=4))
 
 
@@ -73,12 +79,13 @@ def single_thread_decompress():
 
     print("All done")
 
+
 def comparison():
     """Compare the before and after processing to understand what went wrong."""
 
     directory = "/home/ejovo/MAIN/S9/machine_learning/project/data"
 
-    pre  = join(directory, "test.json")
+    pre = join(directory, "test.json")
     post = join(directory, "test_processed.json")
 
     with open(pre) as pre_file:
@@ -96,9 +103,14 @@ def comparison():
     ic(post_value)
 
 
+def process_complete_xml_dump():
+    """Test function to actually process the contents of the entire xml dump"""
+    xml_dump_file = "/home/ejovo/MAIN/S9/machine_learning/project/data/xml/dump.xml"
+    parse_xml_dump(xml_dump_file, None)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
 
-    ms_process_xml()
+    process_complete_xml_dump()
+    # ms_process_xml()
     # comparison()
