@@ -48,7 +48,7 @@ def process_multistream_xml(
         json_directory, "{:04}.json".format(stream_index)
     )
 
-    for stream_id, xml_file in enumerate(os.listdir(xml_directory)[181:182], 1):
+    for stream_id, xml_file in enumerate(os.listdir(xml_directory), 1):
 
         filename_full = os_path.join(xml_directory, xml_file)
         tree = ET.parse(filename_full)

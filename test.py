@@ -75,7 +75,8 @@ def process_complete_xml_dump():
 
 if __name__ == "__main__":
 
-    decompress_dump_multistream()
+    # decompress_dump_multistream()
+    process_multistream_xml()
     # process_complete_xml_dump()
     # ms_process_xml()
     # comparison()
