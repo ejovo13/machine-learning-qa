@@ -1,0 +1,2 @@
+data/dump/simplewiki-20240201-pages-articles-multistream.xml.bz2 filter=lfs diff=lfs merge=lfs -text
+data/dump/simplewiki-20240201-pages-articles-multistream-index.txt filter=lfs diff=lfs merge=lfs -text
