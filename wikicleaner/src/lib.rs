@@ -1,19 +1,15 @@
 use std::error::Error;
+use regex::Regex;
+use once_cell::sync::Lazy;
 
 use pyo3::prelude::*;
 
-/// Formats the sum of two numbers as string.
-#[pyfunction]
-fn sum_as_string(a: usize, b: usize) -> PyResult<String> {
-    Ok((a + b).to_string())
-}
-
-// The very first thing we should do is rip through the entire text and find where our double bracket annotations begin and end
 
 #[derive(Debug, Clone)]
 enum BracketType {
     Square,
     Curly,
+    // Angle
 }
 
 #[derive(Debug, Clone)]
@@ -24,22 +20,22 @@ struct BracketLocation {
 }
 
 impl BracketLocation {
-    /// Check if we should completely eliminate the string encoded in this bracket.
-    fn should_be_removed(&self, source_str: &str) -> bool {
-        match self.bracket_type {
-            BracketType::Curly => true,
-            BracketType::Square => {
-                // We only care about the slice starting 2 indices after our start position
-                // with length 4
-                let test_string: String = source_str[self.start_pos..]
-                    .chars()
-                    .skip(2)
-                    .take(4)
-                    .collect();
-                test_string == *"File"
-            }
-        }
-    }
+    // /// Check if we should completely eliminate the string encoded in this bracket.
+    // fn should_be_removed(&self, source_str: &str) -> bool {
+    //     match self.bracket_type {
+    //         BracketType::Curly => true,
+    //         BracketType::Square => {
+    //             // We only care about the slice starting 2 indices after our start position
+    //             // with length 4
+    //             let test_string: String = source_str[self.start_pos..]
+    //                 .chars()
+    //                 .skip(2)
+    //                 .take(4)
+    //                 .collect();
+    //             test_string == *"File"
+    //         }
+    //     }
+    // }
 
     /// Check if this bracket location is doubled up [[]] or singled []
     fn is_doubled(&self, source_str: &str) -> bool {
@@ -54,11 +50,34 @@ impl BracketLocation {
         second == first
     }
 
-    /// Check if the inner content of our location is an annotation
+    /// Check if the inner content of our location has an alias (e.g. `[[Referenced Article | appearence in this article]]`)
+    fn is_aliased_link(&self, source_str: &str) -> bool {
+        self.inner(source_str).contains('|')
+    }
+
+    /// Return only the name of the referenced article if the inner content is an aliased link
+    ///
+    /// See [BracketLocation::is_aliased_link] for more details
+    fn referenced_article(&self, source_str: &str) -> String {
+
+        let inner = self.inner(source_str);
+        let pipe_index = inner.find('|');
+
+        match pipe_index {
+            // Then we are dealing with an aliased link!
+            Some(pipe_index) => String::from(&inner[pipe_index + 1..inner.len()]),
+            None => inner
+        }
+    }
+
+    /// Check if the inner content of our location is an annotation (e.g. `[[File:SOME_FILE.jpg]]`)
+    ///
+    /// This function naively checks for the presence of a semicolon (`':'`) character.
     fn is_annotation(&self, source_str: &str) -> bool {
         match self.bracket_type {
             BracketType::Square => self.inner(source_str).contains(':'),
             BracketType::Curly => false,
+            // BracketType::Angle => false
         }
     }
 
@@ -154,6 +173,41 @@ fn validate_square_bracket_placement(article_text: &str) -> BracketValidation {
     }
 }
 
+// /// Try and remove all html tags and comments from our article
+// fn strip_html(article_text: &str) -> String {
+
+//     let re = Regex::new(r"(?P<html><.*?>)").unwrap();
+
+//     let caps = re.captures(article_text).unwrap();
+
+//     for capture in caps {
+//     }
+
+//     todo!()
+// }
+
+/// Remove any comments of the form `"<!-- ATTENTION CLOSING ADMINISTRATOR -->"` using a regex
+fn strip_html_comments(article_text: &str) -> String {
+    static RE_HTML: Lazy<Regex> = Lazy::new(|| Regex::new(r"<!.*?>").unwrap());
+    RE_HTML.replace_all(article_text, "").to_string()
+}
+
+fn strip_newline(article_text: &str) -> String {
+    static RE_NEWLINE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\n").unwrap());
+    RE_NEWLINE.replace_all(article_text, "").to_string()
+}
+
+/// Remove
+fn strip_references(article_text: &str) -> String {
+    static RE_REFERENCES: Lazy<Regex> = Lazy::new(|| Regex::new(r"==References==").unwrap());
+    RE_REFERENCES.replace_all(article_text, "").to_string()
+}
+
+/// Retrieve the very first bracket location
+fn first_bracket_location(article_text: &str) -> Option<BracketLocation> {
+    let locations = mark_bracket_locations(article_text);
+    locations.first().cloned()
+}
 
 /// Mark the locations of curly and square brackets.
 ///
@@ -172,6 +226,11 @@ fn mark_bracket_locations(article_text: &str) -> Vec<BracketLocation> {
     let mut lcb_count = 0;
     let mut rcb_count = 0;
     let mut lcb_open_index = 0;
+
+    // // Angle bracket counts.. hmm we are starting to repeat code...
+    // let mut lab_count = 0;
+    // let mut rab_count = 0;
+    // let mut rab_open_index = 0;
 
     // for (idx, c) in article_text.graphemes(true).enumerate() {
     for (idx, c) in article_text.char_indices() {
@@ -317,7 +376,7 @@ fn strip_double_brackets(article_text: &str) -> String {
 
             // Handle the middle chunks
             for (prev_location, next_location) in paired_iter {
-                out_string.push_str(&prev_location.inner(article_text));
+                out_string.push_str(&prev_location.referenced_article(article_text));
                 out_string.push_str(
                     &article_text[prev_location.next_index(article_text)..next_location.start_pos],
                 );
@@ -327,7 +386,7 @@ fn strip_double_brackets(article_text: &str) -> String {
         // Finally handle the final chunk
         let final_location = locations.last().unwrap();
 
-        out_string.push_str(&final_location.inner(article_text));
+        out_string.push_str(&final_location.referenced_article(article_text));
         out_string.push_str(
             &article_text[final_location.next_index(article_text)..article_text.len()]
         );
@@ -367,11 +426,19 @@ fn clean_article_text(article_text: &str) -> String {
     strip_double_brackets(&sans_annotations)
 }
 
+/// Strip html comments and other minor cleanup like removing newline characters.
+#[pyfunction]
+fn post_processing(article_text: &str) -> String {
+    let sans_comments = strip_html_comments(article_text);
+    let sans_newline = strip_newline(&sans_comments);
+    strip_references(&sans_newline)
+}
+
 /// A Python module implemented in Rust.
 #[pymodule]
 fn wikicleaner(_py: Python, m: &PyModule) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(sum_as_string, m)?)?;
     m.add_function(wrap_pyfunction!(clean_article_text, m)?)?;
+    m.add_function(wrap_pyfunction!(post_processing, m)?)?;
     Ok(())
 }
 
@@ -379,7 +446,7 @@ fn wikicleaner(_py: Python, m: &PyModule) -> PyResult<()> {
 mod tests {
 
     use crate::{
-        clean_article_text, mark_bracket_locations, sanitize_locations, strip_annotations, strip_double_brackets, strip_double_brackets_curly
+        clean_article_text, mark_bracket_locations, sanitize_locations, strip_annotations, strip_double_brackets, strip_double_brackets_curly, strip_html_comments, strip_newline
     };
 
     #[test]
@@ -705,6 +772,16 @@ mod tests {
         let sans_annotations = strip_annotations(&sans_curly);
 
 
+    }
+
+    #[test]
+    fn test_strip_comments() {
+
+        let sample = r#"<!-- ATTENTION CLOSING ADMINISTRATOR -->\n\n<!-- Please change it to either  or . The archival templates  and  are placed at the top and bottom respectively.-->\n\n=== Molecular mass ===\n: \u00b7 \nRathfelder ''has nominated this page for deletion for the reason:'' Not encyclopedic.  () 22:32, 31 January 2024 (UTC)\n\n''Please discuss this request below, but keep in mind that  and that there may be options other than \"keep\" or \"delete\", such as merging.''\n\n====Discussion====\n\n\n<!--Please add any discussion above this comment.-->\nThis request is due to close on"#;
+
+        dbg!(strip_html_comments(sample));
+        println!();
+        dbg!(strip_newline(&strip_html_comments(sample)));
     }
 
 }

@@ -1,0 +1,238 @@
+---
+title: "Apprentissage statistique"
+subtitle: "Projet Question Answering"
+author: "Evan Voyles"
+format:
+    pdf
+---
+
+## Introduction
+
+Ce rapport présente deux stratégies de RAG pour répondre aux questions dans l'ensemble de données [nq_open](https://huggingface.co/datasets/nq_open). La première entre eux présente une démarche inédite[^1] qui enrichissait ma familiarité des base de données d'embeddings et qui était plûtot pédagogique. La deuxième stratégie représente une approche plus simple mais plus efficace, plus adaptée pour un système en production.
+
+[^1]: Où bien, une démarche que je croyais être nouvatrice
+
+## Première Stratégie: Wikipedia Simple
+
+A priori toutes les réponses aux questions se trouvent dans le contenu de Wikipedia.
+Inspiré par le fonctionnement interne du [Vanna](https://vanna.ai/) - un framework RAG qui combinent les technologies de [ChromaDB](https://www.trychroma.com/) et des modèles OpenAI pour générer des requêtes SQL - il m'est arrivé une idée qui me semblait de terrain: télécharger le contenu de Wikipedia et ensuite encoder les articles dans une base de données (bdd) vectorielle - facilité par la bibliothèque ChromaDB.
+
+Cette approche fournit plusiers points pédagogiquement intéressants:
+
+- Rassembler et manipuler une source d'information afin de lui donner à manger à une application IA
+- Apprendre l'API d'une bdd vectorielle[^2]
+- Réinventer la roue avant de bien comprendre son processus de fabrication
+
+
+[^2]: Pour être franc, je suis pas très amateur de l'assombrissement. Alors que LangChain et Vanna utilise ChromaDB internellement, il me semble plus interéssant de me familiariser avec la couche au-dessous, avant de passer par l'abstraction au-dessus. Alors que bien sur ChromaDB est, effectivement, une abstraction [lui même](https://en.wikipedia.org/wiki/Matryoshka_doll) !
+
+
+### Source des informations
+
+Wikimedia - l'organisation derrière wikipedia - offre gratuitement à télécharger des dépôts de données[^3] de tous leurs articles. Alors que la taille du dépôt de wikipedia de base est trop large pour être maniable:
+
+> As of 2 July 2023, the size of the current version of all articles compressed is about 22.14 GB without media
+[^ref]
+
+[^ref]: https://en.wikipedia.org/wiki/Wikipedia:Size_of_Wikipedia
+
+il existe heuresement une version Wikipedia _simple_, qui est moins détaillé et écrit dans un registre moins complexe[^4]. Toutes les articles de cette version (sans médias) sont emballées dans un `.bz2` de taille `283.9 MiB`.[^5] Cela, on peut travailler avec.
+
+### Traitement du texte
+
+En essayant de ne pas trop détailler, cette section documente le pré-traitement qui a eu lieu pour préparer la construction d'une bdd vectorielle. De plus, pour éviter de gonfler la taille de ce rapport, il y aurait des liens vers des gists secrets qui dévoilent le format des certains fichiers.
+
+##### Étude du dépôt
+
+Dans un premier temps, nous avons utilisé le module `bz2` en python pour extraire un fichier `.xml`[^6] contenant le corpus entier du wikipedia simple. [Ici](https://gist.github.com/ejovo13/85bf43c76ab8bc278822f95fefb03ca5) vous avez un exemple du premier fichier extrait. Chaque noeud `<page>` correspond à un seul article qui nous intéresse et c'est bien le contenu du `<revision><text>` qui est à encoder dans un embedding. Alors qu'à ce stade là, il y a une bémole. Étudions rapidement un extrait du `<text>` de l'article "April":
+
+> == The Month ==
+> [[File:Colorful spring garden.jpg|thumb|180px|right|[[Spring]] flowers in April in the [[Northern Hemisphere]].]]
+> April comes between [[March]] and [[May]], making it the fourth month of the year. It also comes first in the year out of the four months that have 30 days, as [[June]], [[September]] and [[November]] are later in the year.
+
+Ce texte n'est pas prêt pour être encodé dans une bdd vectorielle. Il y en a beacoup trop des annotations superflus: `[[File:*]]` et des crochets: `[[March]]`. Il y a eu même des cas où il y a des bouts entiers de XML au sein de l'article ! De plus, il y a beaucoup d'articles qui contiennent que des metadonnées pour Wikipedia lui même, qui ne sont pas du tout pertinents pour une application Q&A.
+
+##### Extraction du contenu de l'article
+
+Après avoir filtré tous les articles de metadonnées, il nous restaient encore une bonne 200.000 articles à traiter. En craignant qu'un simple regexp ne ferait pas le taf[^7], je me suis lancé à développer un [module en Rust](https://pypi.org/project/wikicleaner/)[^8] qui pourrait rapidement éliminer les annotations:
+
+```{python}
+import wikicleaner as wc
+t = r"April comes between [[March]] and [[May]], making it the fourth month of the year."
+wc.clean_article_text(t)
+```
+
+Après encore un passage par `Beautifulsoup4` pour envlèver du XML/HTML, j'ai réussi à produire des fichiers json avec le title, identifiant, et contenu de chaque article. [Voici](https://gist.github.com/ejovo13/c72e2f7ed6b2d3721f4fdcc0aeaaf2b7) un example pour la première centaine d'articles.
+
+
+[^3]: Data dumps
+[^4]: Utiliser le mot "change" à la place de "edit", par exemple.
+[^5]: J'ai utilisé les dépôts de données du 24 janvier, disponible [ici](https://dumps.wikimedia.org/simplewiki/20240201/). En particulier, les deux fichiers `simplewiki-20240201-pages-articles-multistream.xml.bz2` et `simplewiki-20240201-pages-articles-multistream-index.txt.bz2`.
+[^6]: En fait nous avons extrait un fichier par flux dans le `.bz2` multi-flux
+[^7]: Et surtout récemment traumatisé par [cette vidéo](https://www.youtube.com/watch?v=DDe-S3uef2w)
+[^8]: En utilisant [PyO3](https://pyo3.rs/v0.20.2/), inspiré par la bibliothèque [Polars](https://pola.rs/)
+
+### Encodage en embedding
+
+L'API de ChromaDB était très pratique et facilie à utiliser. La classe centrale est une `Collection` dans laquelle l'on peut rajouter des phrases. La bibliotheque utilise un modèle fournit par [SentenceTransformers](https://www.sbert.net/) pour encoder du texte en vecteur.
+
+> By default, Chroma uses the Sentence Transformers all-MiniLM-L6-v2 model to create embeddings[^model]
+
+Donc, j'ai créé une nouvelle collection `simple_wikipedia` et j'ai lancé un essai sur les milles premiers articles. Sur un cpu `AMD Ryzen 9 3900XT (12) @ 3.800GHz` il a mis 40 secondes pour les encoder. 77 minutes pour les 100.000 premiers articles. Alors que je n'ai pas experimenté avec le gpu, tout au long du calcul l'utilisation de chaque coeur du CPU était à environ 100%.
+
+Avant de continuer avec l'encodage, il était l'heure de reculer et évaluer un peu des résultats.
+
+### Requêter de chromadb
+
+Bien que produire des embeddings était lent, c'était rapide d'effectuer des recherches. L'API de chromadb de base fournit une fonction `query` qui cherche dans l'espace vectoriel pour les 10 plus proches voisins.
+
+```{python}
+from chromadb import PersistentClient
+client = PersistentClient()
+simple = client.get_collection("simple_wikipedia")
+res = simple.query(query_texts="when did the eagles win the last superbowl")
+res["metadatas"]
+```
+
+En fonction de la longueur des articles, j'ai passé le contenu des premiers quelques résultats comme contexte pour ma requête vers un modèle LLM.
+
+### Avantages et désavantages
+
+Cette stratégie de RAG est à la fois convenient et inconvenient. Il est pratique d'avoir une base de connaissance locale, sans être obligé de passer par une recherche internet. Alors que ce rapport utilise les modèles de OpenAI pour évaluer la performance, il est tout à fait possible de combiner cette méthode de RAG aussi avec un LMM hébérgé localement. Au finale, notre bdd chroma n'est pas trop lourd: les premiers 100.000 articles rentrent dans un fichier de presque 1 GiB pile.
+
+Cela dit, il était inconvenient (et chronophage, d'ailleurs) d'extraire manuellement le contenu des articles du dépôt. Il a pris encore du temps pour encoder le contenu dans des embeddings. Une solution a ce point est d'utiliser une embedding pre-entrainé sur hugging face. Cependant, un autre point négative pour cette stratégie est lié aux contraintes du jeu. Comme j'ai utilisé le wikipedia simple, il y a notamment _moins_ d'information présent ! Considérons la question :
+
+> love yourself by justin bieber is about who
+
+dont la réponse existe dans la page wikipedia normale:
+
+> On March 7, 2017, composer Ed Sheeran stated on the Howard Stern Show that he had Rihanna in mind for the song at first, and the original lyric was indeed "fuck yourself"[^love]
+
+Mais elle n'est pas présente dans la page simple ! Voici l'article _en entier_ de la version simple:
+
+> "Love Yourself" is a 2015 song by Canadian singer Justin Bieber and is taken from his fourth studio album Purpose. It topped the single charts in many countries around the world.
+
+[^love]: https://en.wikipedia.org/wiki/Love_Yourself
+
+[^model]: https://docs.trychroma.com/embeddings
+
+## Deuxième Stratégie: Recherche avec DuckDuckGo
+
+Cette deuxième stratégie était beaucoup plus simple à implémenter. Il s'agissait principalement de trouver des résultats pertinents à l'aide d'un moteur de recherche classique, et puis donner ces résultats en tant que contexte pour un modèle LLM. J'ai commencé avec l'API de LangChain, mais pendant le développement je n'ai pas apprécié le manque de transparence quand mes requêtes ne marchaient pas. Par conséquent je suis passé à la bibliothèque [duckduckgo search](https://pypi.org/project/duckduckgo-search/) pour effectuer cet étape.
+
+## Résultats
+
+Cette partie détaille les résultat experimentales des différentes stratégies pour le RAG. Pour les deux stratégies, j'ai dû respecter la limite de contexte des modèles OpenAI en introduisant un seuil de tokens à recupérer. Cela à été implémenté à l'aide de la bibliothèque délaissé `nltk`.
+
+### Évaluation
+
+Je ne suis pas satisfait avec la métrique "exact match" donc ici je décris rapidement notre manière d'évaluer si une réponse est correcte où pas. Dans l'idée de créer une application qui répond à des questions pour un humain, je voulais construire un indicateur qui décide que la réponse générée de "December 14th, 1942" est équivalente à "14 December 1942 UTC". D'ailleur, la première réponse "incorrecte" est une construction plus naturelle pour les anglophones.
+
+Une raison encore plus convainquante c'est l'inconsistance des réponses:
+
+| * | Question | Answer |
+| -- | -------- | ------ |
+| 1  | who wrote he ain't heavy he's my brother lyrics | Bobby Scott; Bob Russel |
+| 2  | when did the eagles win last [sic] superbowl | 2017 |
+| 3  | how many seasons of the bastard executioner are there | one; one season |
+
+1. Les deux personnes ont écrit les paroles à cette chanson. J'opine que répondre avec un seul nom est faux
+2. Le dernier superbowl que les Eagles a gagné a _eu lieu_ le 4 Février, 2018. Est-ce 2017 la bonne réponse? Peut-être pour la question "In which NFL _season_ did the eagles win the last Superbowl?"
+3. Ici on devrait accepter soit "one", soit "one season". Cela n'est pas consistent avec le format présenté dans (1.)
+
+Nous proposons donc deux méthodes d'évaluation. La première est très peu robuste: il s'agit de la validation à la main. Moi, sur un petit ensemble des réponses générées, ai déterminé si la réponse peut être considerée comme correcte. La deuxième stratége d'évaluation consiste à utiliser un LLM pour déterminer si deux réponses sont _sémantiquement_ équivalent.
+
+Pour réussir ce dernier, j'ai utilisait le prompt suivant:
+
+```python
+f"""I am going to provide you with a question, and two answers. You are
+    to determine if the two answers are semantically the same (yes) or if
+    they are semantically different (no). You must ONLY respond with 'yes' or 'no'
+
+    For example, '1972' and '14 December 1972' are semantically different,
+    because the second answer contains more information. However, '14 December 1972'
+    and 'December 14th, 1972' are syntactically different but SEMANTICALLY the same.
+
+    Here is the question: '{question}'
+    Here is the first answer: '{model_answer}'
+    Here is the second answer: '{correct_answer}'
+
+    Do these two answers effectively mean the same thing?
+"""
+```
+
+### Comparaison des modèles
+
+Ici nous présentons les résultats pour 4 modèles différente. Chacun de ces modèles est propulsé par le même modèle de chat: `gpt-3.5-turbo-0613` avec `temperature = 0` pour avoir des résultats déterministe. L'évaluation automatique utilisait `gpt-4-0125-preview` pour avoir des résultats plus justes.
+
+| *   | Nom | Description |
+| --- | --- | ----------- |
+| 1   | llm_base | Modèle LLM sans RAG, sans aucune instruction pour comment répondre |
+| 2 | llm_no_rag | Modèle LLM sans RAG, avec des instructions pour comment répondre |
+| 3 | llm_chroma | Modèle LLM dont le RAG fonctionne à une base de donnée ChromaDB locale, + des instructions pour comment répondre |
+| 4 | llm_ddg    | Modèle LLM dont le RAG fonctionne au moteur de recherche DuckDuckGo, + des instructions pour comment répondre |
+
+Le premier modèle est le modèle de base. Le deuxième modèle nous donne l'occasion d'observer l'effet puissant que peut induire une prompte adaptée. Les deux derniers modèles nous permettent d'évaluer l'influence du RAG.
+
+Nous avons utilisé les instructions suivantes pour les modèles 2-4:
+
+```python
+p = f"""I will ask a question, with context, and you are to provide the _most concise_
+        answer possible. For example, if I ask you 'Which band sings "Paint it black"?',
+        you must respond 'The Rolling Stones'. Assume that the current year is 2019.
+        When it comes to sports years, answer with the year of the _season_. It is
+        important to first consider the following context when responding: {context}
+
+        Finally, here is the question: {question}
+    """
+```
+
+Au final, nous avons testé que sur un ensemble de les premières 50 questions de l'ensemble de validation de nq_open.
+
+### Révélation
+
+| Nom | Réponses correctes | Taux de réussite (%) | Temps d'exécution (s) |
+| --- | ------------------ | ---------------- | ----------------- |
+| llm_base | 38 | 76 | 138.6 |
+| llm_no_rag | 28 | 56 | 44.5 |
+| llm_chroma | 28 | 56 | 57 |
+| llm_ddg | - | - | > 600 |
+
+Je ne m'attendais pas du tout à ces résultats.
+
+Le modèle `llm_chroma` avait une pire performance parce qu'il y avait des fois où l'information présente dans la bdd chroma était insuffisante. On a effectivement rendu notre modèle plus stupide. Où le modèle `llm_base` répondait avec certitude, notre modèle `llm_chroma` répondait qu'il ne savait pas.
+
+Prenons l'exemple de la question
+
+> where did the last name wallace come from
+
+La bonne réponse (trouvée par `llm_base`) est "Scotland". Cependant, le modèle `llm_chroma` a répondu:
+
+> The origin of the last name Wallace is not clear.
+
+`llm_no_rag`, par contre a diminué de score parce que parfois ses réponses étaient _trop_ succinctes, particulièrement quand il s'agissaient des dates.
+
+Pour le `llm_ddg`, pour quelques raisons les requêtes ne marchaient plus après une dizaine de paires de `(questions, réponse)`. Je n'ai pas eu le temps de découvrir la raison pour quoi.
+
+Voici les questions pour laquelles tous les modèles n'ont pas trouvé la bonne réponse:
+
+```python
+{'i was a great islamic scholar and mathematician who died in 1131 ce',
+ 'last episode of what happens to my family',
+ 'love yourself by justin bieber is about who',
+ 'what are the ranks in the us navy',
+ 'who does the voice of nala in the lion king',
+ 'who is the coach for the ottawa senators',
+ 'who sang i ran all the way home',
+ "who won last year's ncaa women's basketball"}
+```
+
+## Réflexions
+
+J'ai effectivement handicappé le LLM de base avec un système de RAG inadéquat. Dans la suite, il serait intéressant d'explorer des autres méthodes de RAG plus établies, et plus sophistiqués. Par example, dans ma bdd chroma, je n'ai pas découpé les articles en plusieurs morceau, j'ai tout simplement encodé tout l'article dans un seul coup.
+
+Néanmoins, je me suis amusé à apprendre l'API de ChromaDB et me familiariser avec les diffèrentes chaines de LangChain.
+
+[Code source de ce document]
+[Code source du projet Python]
+[Code source du bibliothèque en Rust]

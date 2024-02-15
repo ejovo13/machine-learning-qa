@@ -2,12 +2,14 @@
 
 import os
 import json
+from bs4 import BeautifulSoup
 import os.path as os_path
 from xml.etree import ElementTree as ET
 from .bz2_extraction import open_index
 from .const import *
 
-from wikicleaner import clean_article_text
+
+import wikicleaner as wc
 
 
 def ms_xml_to_dict(filename: str) -> dict[str, str]:
@@ -48,7 +50,11 @@ def process_multistream_xml(
         json_directory, "{:04}.json".format(stream_index)
     )
 
+    article_hashes = set()
+
     for stream_id, xml_file in enumerate(os.listdir(xml_directory), 1):
+
+        # if stream_id != 4707: continue
 
         filename_full = os_path.join(xml_directory, xml_file)
         tree = ET.parse(filename_full)
@@ -64,27 +70,65 @@ def process_multistream_xml(
 
             article_title = title_el.text
 
-            try:
-                input_text = revision_el.find("text").text
-                if len(input_text) != 0:
-                    article_text = clean_article_text(revision_el.find("text").text)
-                else:
-                    article_text = input_text
-            except:
-                article_text = None
-            # Set value in our dictionary
+            # Skip some extremely f'ed up articles
+            if article_title in [
+                "Wikipedia:WikiProject Check Wikipedia/Translation",
+                "Template:Template usage",
+                "Module:Escape/doc",
+            ]:
+                continue
 
-            try:
-                out_dict[article_title] = dict(
-                    text=article_text, id=article_id_dict[article_title]
-                )
-            except:
-                print(f"Article title: {article_title}")
+            if ":" in article_title:
+                continue
+
+            input_text: str = revision_el.find("text").text
+            if len(input_text) == 0:
+                continue
+
+            # Skip redirects
+            if r"#REDIRECT" in input_text[:10]:
+                continue
+
+            article_text = process_article_text(input_text)
+            article_hash = hash(article_text)
+
+            # Avoid redundant articles
+            if article_hash not in article_hashes:
+                article_hashes.add(article_hash)
+            else:
+                continue
+
+            out_dict[article_title] = dict(
+                text=article_text,
+                id=article_id_dict[article_title],
+                text_hash=article_hash,
+            )
 
         # Now let's write this outdict to a file
         with open(mk_filename(stream_id), "w") as json_file:
             json_file.write(json.dumps(out_dict, indent=4))
 
+
+def remove_html_tags(input_string):
+    """Remove all html tags and their inner content from our text.
+
+    Thanks chatgpt..
+    """
+    soup = BeautifulSoup(input_string, "html.parser")
+    for tag in soup.find_all():
+        tag.decompose()
+    clean_string = str(soup)
+    return clean_string
+
+
+def process_article_text(article_text: str) -> str:
+    """Process the actual article text string in our `"text"` node."""
+    if len(article_text) != 0:
+        article_text = wc.clean_article_text(article_text)
+        article_text = remove_html_tags(article_text)
+        article_text = wc.post_processing(article_text)
+
+    return article_text
 
 
 def parse_xml_dump(filename: str, out_filename: str):

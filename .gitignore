@@ -3,3 +3,6 @@ data
 .env
 poetry.lock
 chroma
+report_files
+.html
+.ipynb

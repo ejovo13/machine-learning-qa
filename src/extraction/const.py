@@ -10,5 +10,3 @@ DEFAULT_MULTISTREAM_JSON_DIR = (
 )
 
 DEFAULT_INDEX_FILE = "/home/ejovo/MAIN/S9/machine_learning/project/data/dump/simplewiki-20240201-pages-articles-multistream-index.txt"
-
-

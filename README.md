@@ -58,6 +58,19 @@ Links to other wikipedia pages are created using `[[Another Article]]`. Since th
 - ``{{monththisyear|4}}``
 
 
+Processing the XML was actually the most time consuming portion of the project
+
+We later discovered that there is a data set onlin
+
+
+##### Beautiful soup
+
+```
+/usr/lib/python3.11/html/parser.py:170: XMLParsedAsHTMLWarning: It looks like you're parsing an XML document using an HTML parser. If this really is an HTML document (maybe it's XHTML?), you can ignore or filter this warning. If it's XML, you should know that using an XML parser will be more reliable. To parse this document as XML, make sure you have the lxml package installed, and pass the keyword argument `features="xml"` into the BeautifulSoup constructor.
+  k = self.parse_starttag(i)
+```
+
+
 ### Encoding Pages Into Embeddings
 
 We used the ChromaDB library with Python bindings to efficiently store the content of wikipedia articles in text.

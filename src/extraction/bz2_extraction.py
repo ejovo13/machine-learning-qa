@@ -62,8 +62,8 @@ def open_index(
             second_colon_idx = line.find(":", first_colon_idx + 1)
 
             byte_index = int(line[0:first_colon_idx])
-            article_id = int(line[first_colon_idx + 1:second_colon_idx])
-            article_title = line[second_colon_idx + 1:].strip()
+            article_id = int(line[first_colon_idx + 1 : second_colon_idx])
+            article_title = line[second_colon_idx + 1 :].strip()
             article_title.replace("&amp;", "&")
             article_title = html.unescape(article_title)
 

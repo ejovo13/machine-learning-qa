@@ -72,11 +72,35 @@ def process_complete_xml_dump():
     xml_dump_file = "/home/ejovo/MAIN/S9/machine_learning/project/data/xml/dump.xml"
     parse_xml_dump(xml_dump_file, None)
 
+def download_qa_dataset():
+
+    from datasets import load_dataset
+    ds = load_dataset("nq_open", split="validation")
+    print(len(ds))
+
+    print(ds.num_columns)
+
+    questions = ds["question"]
+    answers = ds["answers"]
+
+
+    # train = dataset["train"]
+    # validation = dataset["validation"]
+
+    # print(len(train))
+    # print(len(validation))
+
+
+
 
 if __name__ == "__main__":
 
     # decompress_dump_multistream()
-    process_multistream_xml()
     # process_complete_xml_dump()
     # ms_process_xml()
     # comparison()
+
+    # process_multistream_xml()
+    # condense_multistream_json()
+    # inspect_condensed()
+    download_qa_dataset()
