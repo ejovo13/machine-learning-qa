@@ -233,6 +233,6 @@ J'ai effectivement handicappé le LLM de base avec un système de RAG inadéquat
 
 Néanmoins, je me suis amusé à apprendre l'API de ChromaDB et me familiariser avec les diffèrentes chaines de LangChain.
 
-[Code source de ce document]
-[Code source du projet Python]
-[Code source du bibliothèque en Rust]
+[Code source de ce document](https://github.com/ejovo13/machine-learning-qa/blob/main/report.qmd)
+[Code source du projet Python](https://github.com/ejovo13/machine-learning-qa)
+[Code source du bibliothèque en Rust](https://github.com/ejovo13/machine-learning-qa/tree/main/wikicleaner)
